@@ -5,14 +5,14 @@ import numpy as np
 app = Flask(__name__)
 
 # Charger le pipeline
-MODEL_PATH = ""
+MODEL_PATH = "credit_model.pkl"
 model = joblib.load(MODEL_PATH)
 
 @app.route("/")
 def index():
     return "API Flask OK - Service de prédiction crédit"
 
-@app.route("/", methods=["POST"])
+@app.route("/predict", methods=["POST"])
 def predict():
     """
     Attendu: JSON avec les mêmes features que celles utilisées pour l'entraînement.
