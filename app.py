@@ -2,9 +2,10 @@ from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
 import numpy as np
+
 app = Flask(__name__)
 
-# Charger le pipeline
+# Load the pipeline
 MODEL_PATH = "credit_model.pkl"
 model = joblib.load(MODEL_PATH)
 
@@ -15,22 +16,22 @@ def index():
 @app.route("/predict", methods=["POST"])
 def predict():
     """
-    Attendu: JSON avec les mêmes features que celles utilisées pour l'entraînement.
-    Exemple:
+    Expected: JSON with features used for training.
+    Example:
     {
       "age": 40,
       "revenu": 35000,
       "montant_credit": 5000,
       "duree": 24,
-      "profession": "employe",
-      ...
+      "profession": "employe"
     }
     """
+
     data = request.get_json()
     if not data:
         return jsonify({"error": "Aucun JSON envoyé"}), 400
 
-    # Si on reçoit une seule observation sous forme d'objet dict -> construire DataFrame 1 ligne
+    # Convert single dict or list of dicts to DataFrame
     if isinstance(data, dict):
         X_input = pd.DataFrame([data])
     elif isinstance(data, list):
@@ -38,7 +39,22 @@ def predict():
     else:
         return jsonify({"error": "Format JSON non supporté. Envoyer dict ou list de dicts."}), 400
 
-    # S'assurer mêmes colonnes: on laisse le pipeline gérer les colonnes manquantes / inconnues
+    # Ensure all expected columns are present
+    try:
+        expected_columns = model.feature_names_in_
+    except AttributeError:
+        return jsonify({"error": "Votre modèle ne contient pas 'feature_names_in_'. Re-train avec scikit-learn >=1.0"}), 500
+
+    for col in expected_columns:
+        if col not in X_input.columns:
+            # Fill numeric columns with 0, object/categorical with 'unknown'
+            if pd.api.types.is_numeric_dtype(model.named_steps['preprocessor'].transformers_[0][1].named_steps['imputer'].statistics_[0]):
+                X_input[col] = 0
+            else:
+                X_input[col] = 'unknown'
+
+    X_input = X_input[expected_columns]
+
     try:
         probs = model.predict_proba(X_input)[:, 1]
         preds = model.predict(X_input)
@@ -50,11 +66,11 @@ def predict():
         message = "Client peut payer" if pred == 1 else "Client ne peut pas payer"
         results.append({
             "prediction": int(pred),
-            "probability": float(round(p,4)),
+            "probability": float(round(p, 4)),
             "message": message
         })
 
-    # Si un seul élément, retourner un objet
+    # Return single object if only one prediction
     if len(results) == 1:
         return jsonify(results[0])
     return jsonify(results)
