@@ -1,99 +1,157 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
-import joblib
-
-# --- 1. Charger le dataset ---
-df = pd.read_csv("df_complet.csv")  # adapter le chemin si besoin
-df.head()
-
-# --- 2. Identifier la target ---
-target_col = "est_encaisse"
-if target_col not in df.columns:
-    raise ValueError(f"Colonne cible '{target_col}' non trouvée dans le CSV.")
-
-# --- 3. Nettoyage simple ---
-# Exemples généraux — adapte selon ton jeu de données :
-df = df.copy()
-# Supprimer lignes entièrement vides
-df.dropna(how="all", inplace=True)
-
-# Séparer X / y
-X = df.drop(columns=[target_col])
-# Convertir la target en binaire 0/1 (valeur 'encaisse' -> 1, autre -> 0)
-y = (df[target_col] == 'encaisse').astype(int)
-
-# Détecter colonnes numériques/catégorielles
-num_cols = X.select_dtypes(include=["int64","float64"]).columns.tolist()
-cat_cols = X.select_dtypes(include=["object","category","bool"]).columns.tolist()
-
-# Imputer valeurs manquantes simples
 from sklearn.impute import SimpleImputer
-num_imputer = SimpleImputer(strategy="median")
-cat_imputer = SimpleImputer(strategy="constant", fill_value="missing")
+import joblib
+import warnings
+warnings.filterwarnings('ignore')
 
-# Pipeline de préprocessing
-numeric_pipeline = Pipeline(steps=[
-    ("imputer", num_imputer),
-    ("scaler", StandardScaler())
-])
+# Charger les données
+print("📊 Chargement des données...")
+df = pd.read_csv('df_complet.csv')
 
-categorical_pipeline = Pipeline(steps=[
-    ("imputer", cat_imputer),
-    ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-])
+# Afficher les informations de base
+print(f"Dimensions du dataset: {df.shape}")
+print(f"Colonnes disponibles: {len(df.columns)}")
+print(f"Variable cible 'est_encaisse': {df['est_encaisse'].value_counts()}")
 
-preprocessor = ColumnTransformer(transformers=[
-    ("num", numeric_pipeline, num_cols),
-    ("cat", categorical_pipeline, cat_cols)
-])
+# Identifier la variable cible
+target = 'est_encaisse'
 
-# Pipeline complet avec modèle
-clf = Pipeline(steps=[
-    ("preprocessor", preprocessor),
-    ("model", LogisticRegression(max_iter=1000))
-])
+def prepare_data(df):
+    """Préparer les données pour l'entraînement"""
+    data = df.copy()
+    
+    # Encoder la variable cible
+    data[target] = data[target].map({'non_encaisse': 0, 'encaisse': 1})
+    print(f"✅ Variable cible encodée: {data[target].value_counts()}")
+    
+    # Sélectionner les features importantes (éviter les colonnes problématiques)
+    features_to_use = [
+        'emprunteur_salaire', 'nbr_enfants', 'cumul_crd_immo', 'nbr_credit_immo',
+        'cumul_crd_conso', 'nbr_credit_conso', 'type_dossier',
+        'emprunteur.situation_familiale.libelle', 'type_contrat_menage',
+        'emprunteur.anciennete', 'emprunteur.charge.loyer'
+    ]
+    
+    # Garder seulement les colonnes existantes
+    available_features = [f for f in features_to_use if f in data.columns]
+    available_features.append(target)
+    
+    data = data[available_features]
+    print(f"📋 Features sélectionnées: {available_features}")
+    
+    # Séparer features et target
+    X = data.drop(columns=[target])
+    y = data[target]
+    
+    # Identifier les types de colonnes
+    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
+    
+    print(f"🔢 Colonnes numériques: {numeric_cols}")
+    print(f"🔤 Colonnes catégorielles: {categorical_cols}")
+    
+    # Traitement des valeurs manquantes pour les numériques
+    imputer_num = SimpleImputer(strategy='median')
+    X[numeric_cols] = imputer_num.fit_transform(X[numeric_cols])
+    print("✅ Valeurs manquantes numériques traitées")
+    
+    # Encoder les variables catégorielles
+    label_encoders = {}
+    for col in categorical_cols:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col].astype(str))
+        label_encoders[col] = le
+        print(f"✅ Colonne '{col}' encodée - {len(le.classes_)} classes")
+    
+    return X, y, numeric_cols, categorical_cols, label_encoders, imputer_num
 
-# Split train/test
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-# Entraînement
-clf.fit(X_train, y_train)
+# Préparer les données
+print("\n🔧 Préparation des données...")
+X, y, numeric_cols, categorical_cols, label_encoders, imputer_num = prepare_data(df)
+
+# Séparation train/test
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+print(f"\n📁 Split des données:")
+print(f"Train set: {X_train.shape}")
+print(f"Test set: {X_test.shape}")
+print(f"Proportion cible - Train: {y_train.value_counts(normalize=True)}")
+print(f"Proportion cible - Test: {y_test.value_counts(normalize=True)}")
+
+# Normalisation des données
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+print("✅ Données normalisées")
+
+# Entraînement du modèle
+print("\n🤖 Entraînement du modèle...")
+model = LogisticRegression(
+    random_state=42, 
+    max_iter=1000,
+    class_weight='balanced'  # Gérer le déséquilibre des classes
+)
+model.fit(X_train_scaled, y_train)
+
 # Évaluation
-y_pred = clf.predict(X_test)
-y_prob = clf.predict_proba(X_test)[:,1]
-print("Accuracy:", accuracy_score(y_test, y_pred))
-print("Confusion matrix:\n", confusion_matrix(y_test, y_pred))
-print("Classification report:\n", classification_report(y_test, y_pred))
-# Interpréter coefficients (approximation : pour variables encodées, noms générés)
-# Récupérer noms des features après preprocessor
-def get_feature_names(column_transformer):
-    # pour sklearn >= 1.0
-    feature_names = []
-    for name, trans, cols in column_transformer.transformers_:
-        if name == "remainder":
-            continue
-        # cols peut être une liste ou un ndarray ; normaliser en list
-        in_cols = list(cols)
-        if hasattr(trans, 'named_steps') and 'onehot' in trans.named_steps:
-            ohe = trans.named_steps['onehot']
-            ohe_names = ohe.get_feature_names_out(in_cols)
-            feature_names.extend(list(ohe_names))
-        elif hasattr(trans, 'named_steps') and 'scaler' in trans.named_steps:
-            feature_names.extend(in_cols)
-        else:
-            feature_names.extend(in_cols)
-    return feature_names
-feat_names = get_feature_names(clf.named_steps['preprocessor'])
-coefs = clf.named_steps['model'].coef_[0]
-coef_df = pd.DataFrame({"feature": feat_names, "coef": coefs})
-coef_df = coef_df.reindex(coef_df.coef.abs().sort_values(ascending=False).index)
-print("Top features influence (by absolute coefficient):")
-print(coef_df.head(20))
-# Sauvegarder le pipeline
-joblib.dump(clf, "credit_model.pkl")
-print("Modèle sauvegardé dans credit_model.pkl")
+y_pred = model.predict(X_test_scaled)
+y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+
+print("\n" + "="*50)
+print("📊 PERFORMANCES DU MODÈLE")
+print("="*50)
+print(f"✅ Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+print(f"✅ Score train: {model.score(X_train_scaled, y_train):.4f}")
+print(f"✅ Score test: {model.score(X_test_scaled, y_test):.4f}")
+
+print("\n📈 Matrice de confusion:")
+print(confusion_matrix(y_test, y_pred))
+
+print("\n📋 Rapport de classification:")
+print(classification_report(y_test, y_pred))
+
+# Analyse des coefficients
+feature_importance = pd.DataFrame({
+    'feature': X.columns,
+    'coefficient': model.coef_[0],
+    'abs_coefficient': np.abs(model.coef_[0])
+}).sort_values('abs_coefficient', ascending=False)
+
+print("\n🎯 TOP 10 VARIABLES LES PLUS IMPORTANTES")
+print("="*40)
+print(feature_importance.head(10))
+
+# Sauvegarde du modèle et des préprocesseurs
+print("\n💾 Sauvegarde des modèles...")
+joblib.dump(model, 'credit_model.pkl')
+joblib.dump(scaler, 'scaler.pkl')
+joblib.dump(label_encoders, 'label_encoders.pkl')
+joblib.dump(imputer_num, 'imputer_num.pkl')
+joblib.dump(list(X.columns), 'feature_columns.pkl')
+
+# Sauvegarder aussi les informations sur les encodeurs
+encoder_info = {}
+for col, encoder in label_encoders.items():
+    encoder_info[col] = {
+        'classes': list(encoder.classes_),
+        'n_classes': len(encoder.classes_)
+    }
+joblib.dump(encoder_info, 'encoder_info.pkl')
+
+print("✅ Modèle et préprocesseurs sauvegardés:")
+print(f"   - credit_model.pkl")
+print(f"   - scaler.pkl") 
+print(f"   - label_encoders.pkl")
+print(f"   - imputer_num.pkl")
+print(f"   - feature_columns.pkl")
+print(f"   - encoder_info.pkl")
+
+print(f"\n🎉 Entraînement terminé avec succès!")
+print(f"📊 Modèle prêt avec {len(X.columns)} features")

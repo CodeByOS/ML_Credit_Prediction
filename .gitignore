@@ -1,1 +1,7 @@
 .venv/
+credit_model.pkl
+encoder_info.pkl
+features_column.pkl
+imputer_num.pkl
+label_encoder.pkl
+scaler.pkl
